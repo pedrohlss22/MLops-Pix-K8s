@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: spark-etl-orchestrator
+  namespace: datalake
+spec:
+  schedule: "0 2 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: spark
+            image: spark:3.5.1
+            resources:
+              requests:
+                memory: "1Gi"
+                cpu: "500m"
+              limits:
+                memory: "2Gi"
+                cpu: "1000m"
+            command:
+              - "bash"
+              - "-c"
+              - >
+                mkdir -p /tmp/pip_libs &&
+                pip install --no-cache-dir --target /tmp/pip_libs mlflow==2.16.2 boto3==1.33.13 &&
+                export PYTHONPATH=$PYTHONPATH:/tmp/pip_libs &&
+                /opt/spark/bin/spark-submit --conf spark.jars.ivy=/tmp/.ivy2 --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 /scripts/pix_fraud_pipeline.py
+            volumeMounts:
+            - name: script-volume
+              mountPath: /scripts
+            env:
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: "http://bucket-minio.datalake.svc.cluster.local:9000"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: secret-key
+          volumes:
+          - name: script-volume
+            configMap:
+              name: spark-etl-code
+          restartPolicy: Never

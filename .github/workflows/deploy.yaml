@@ -1,0 +1,41 @@
+name: Deploy API to Azure (CI/CD)
+
+# 1. O GATILHO: O robô só acorda quando você der "git push" na branch "main"
+on:
+  push:
+    branches:
+      - main
+    # Opcional: Só roda se houver mudanças na pasta da API ou neste arquivo
+    paths:
+      - 'src/**'
+      - '.github/workflows/**'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        run: az acr login --name acrmlopspix
+
+      - name: Build and Push Docker Image
+        run: |
+          docker build -t acrmlopspix.azurecr.io/fraud-api:${{ github.sha }} .
+          docker push acrmlopspix.azurecr.io/fraud-api:${{ github.sha }}
+
+      - name: Set AKS Context
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ProjetoMLOps-RG-v3
+          cluster-name: ClusterMLOps
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl set image deployment/fraud-api fraud-api=acrmlopspix.azurecr.io/fraud-api:${{ github.sha }} -n datalake

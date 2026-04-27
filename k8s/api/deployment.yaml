@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-api
+  namespace: datalake
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fraud-api
+  template:
+    metadata:
+      labels:
+        app: fraud-api
+    spec:
+      containers:
+      - name: fraud-api
+        image: acrmlopspix.azurecr.io/fraud-api:latest
+        command:
+          - "bash"
+          - "-c"
+          - >
+            mkdir -p /usr/share/man/man1 &&
+            apt-get update && apt-get install -y default-jre &&
+            pip install fastapi uvicorn mlflow==2.16.2 boto3==1.33.13 pyspark==3.5.1 pandas &&
+            uvicorn scripts.main:app --host 0.0.0.0 --port 8000
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: api-code
+          mountPath: /scripts
+      volumes:
+      - name: api-code
+        configMap:
+          name: fraud-api-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-api-service
+  namespace: datalake
+spec:
+  selector:
+    app: fraud-api
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
