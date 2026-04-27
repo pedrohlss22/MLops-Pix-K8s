@@ -1,14 +1,14 @@
 name: Deploy API to Azure (CI/CD)
 
-# 1. O GATILHO: O robô só acorda quando você der "git push" na branch "main"
 on:
   push:
     branches:
       - main
-    # Opcional: Só roda se houver mudanças na pasta da API ou neste arquivo
     paths:
       - 'src/**'
       - '.github/workflows/**'
+      - 'Dockerfile'
+      - 'requirements.txt'
 
 jobs:
   build-and-deploy:
