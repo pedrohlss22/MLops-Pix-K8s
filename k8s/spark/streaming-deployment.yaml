@@ -28,7 +28,7 @@ spec:
           - "-c"
           - >
             mkdir -p /tmp/pip_libs &&
-            pip install --no-cache-dir --target /tmp/pip_libs boto3==1.33.13 numpy pandas &&
+            pip install --no-cache-dir --target /tmp/pip_libs boto3==1.33.13 numpy pandas redis &&
             export PYTHONPATH=$PYTHONPATH:/tmp/pip_libs &&
             /opt/spark/bin/spark-submit --conf spark.jars.ivy=/tmp/.ivy2 --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1 /scripts/pix_streaming_pipeline.py
         volumeMounts:

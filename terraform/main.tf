@@ -1,0 +1,49 @@
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "rg_mlops" {
+  name     = "ProjetoMLOps-RG-v3"
+  location = "Central US"
+}
+
+resource "azurerm_container_registry" "acr_mlops" {
+  name                = "acrmlopspix"
+  resource_group_name = azurerm_resource_group.rg_mlops.name
+  location            = azurerm_resource_group.rg_mlops.location
+  sku                 = "Basic"
+  admin_enabled       = false
+}
+
+resource "azurerm_kubernetes_cluster" "aks_mlops" {
+  name                = "ClusterMLOps"
+  location            = azurerm_resource_group.rg_mlops.location
+  resource_group_name = azurerm_resource_group.rg_mlops.name
+  dns_prefix          = "clustermlops"
+
+  default_node_pool {
+    name       = "default"
+    node_count = 2
+    vm_size    = "Standard_B2s"
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
+}
+
+resource "azurerm_role_assignment" "aks_acr_pull" {
+  principal_id                     = azurerm_kubernetes_cluster.aks_mlops.kubelet_identity[0].object_id
+  role_definition_name             = "AcrPull"
+  scope                            = azurerm_container_registry.acr_mlops.id
+  skip_service_principal_aad_check = true
+}

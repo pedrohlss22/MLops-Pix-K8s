@@ -1,6 +1,7 @@
 import os
+import redis
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, expr, current_timestamp
+from pyspark.sql.functions import from_json, col
 from pyspark.sql.types import StructType, StructField, DoubleType, IntegerType
 from pyspark.ml.feature import VectorAssembler
 
@@ -44,32 +45,43 @@ condicao_erro = (
 )
 
 df_roteado = df_parsed.withColumn("is_bad_record", condicao_erro)
-
-print(">>> [INFO] Rota DLQ Ativada (Monitorando erros...)")
-df_bad = df_roteado.filter(col("is_bad_record")) \
-    .selectExpr("value_str as value")
+df_bad = df_roteado.filter(col("is_bad_record")).selectExpr("value_str as value")
+df_good = df_roteado.filter(~col("is_bad_record")).select("data.*")
 
 query_dlq = df_bad.writeStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", "pix-cluster-kafka-bootstrap:9092") \
     .option("topic", "transacoes-pix-dlq") \
-    .option("checkpointLocation", "s3a://processed/checkpoints_pix_dlq_v1/") \
+    .option("checkpointLocation", "s3a://processed/checkpoints_pix_dlq_v2/") \
     .start()
 
-print(">>> [INFO] Rota Principal Ativada (Processando transações válidas...)")
-df_good = df_roteado.filter(~col("is_bad_record")).select("data.*")
-
-assembler = VectorAssembler(
-    inputCols=["valor_pix", "hora_transacao", "score_conta_origem", "tipo_chave"], 
-    outputCol="features"
-)
+assembler = VectorAssembler(inputCols=["valor_pix", "hora_transacao", "score_conta_origem", "tipo_chave"], outputCol="features")
 df_features = assembler.transform(df_good)
 
 query_datalake = df_features.writeStream \
     .format("parquet") \
     .outputMode("append") \
-    .option("path", "s3a://processed/pix_history_v2/") \
-    .option("checkpointLocation", "s3a://processed/checkpoints_pix_good_v1/") \
+    .option("path", "s3a://processed/pix_history_v3/") \
+    .option("checkpointLocation", "s3a://processed/checkpoints_pix_good_v3/") \
+    .start()
+def atualizar_feature_store(df_batch, batch_id):
+    pdf = df_batch.toPandas()
+    if not pdf.empty:
+        r = redis.Redis(host='redis-service.datalake.svc.cluster.local', port=6379, db=0, decode_responses=True)
+        
+        for index, row in pdf.iterrows():
+            chave_redis = f"feature_store:tipo_chave:{int(row['tipo_chave'])}:qtd_pix"
+
+            r.incr(chave_redis)
+
+            r.expire(chave_redis, 600) 
+            
+        print(f">>> [REDIS] Batch {batch_id} injetado na Feature Store com sucesso!")
+
+print(">>> [INFO] Rota de Feature Store Ativada (Sincronizando com Redis...)")
+query_redis = df_good.writeStream \
+    .foreachBatch(atualizar_feature_store) \
+    .outputMode("append") \
     .start()
 
 spark.streams.awaitAnyTermination()
