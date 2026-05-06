@@ -19,11 +19,11 @@ spec:
         image: bitnami/spark:3.5.1
         resources:
           requests:
-            memory: "2Gi"
-            cpu: "1"
+            memory: "512Mi"
+            cpu: "250m"
           limits:
-            memory: "4Gi"
-            cpu: "2"
+            memory: "1Gi"
+            cpu: "500m"
         env:
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
