@@ -1,40 +1,42 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: spark-etl-orchestrator
+  name: spark-treino-diario
   namespace: datalake
 spec:
   schedule: "0 2 * * *"
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 1
   jobTemplate:
     spec:
       template:
         spec:
+          serviceAccountName: spark
           containers:
           - name: spark
-            image: spark:3.5.1
-            resources:
-              requests:
-                memory: "1Gi"
-                cpu: "500m"
-              limits:
-                memory: "2Gi"
-                cpu: "1000m"
+            image: bitnami/spark:3.5.1   # imagem mais completa
             command:
-              - "bash"
-              - "-c"
-              - >
-                mkdir -p /tmp/pip_libs &&
-                pip install --no-cache-dir --target /tmp/pip_libs mlflow==2.16.2 boto3==1.33.13 &&
-                export PYTHONPATH=$PYTHONPATH:/tmp/pip_libs &&
-                /opt/spark/bin/spark-submit --conf spark.jars.ivy=/tmp/.ivy2 --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 /scripts/pix_fraud_pipeline.py
-            volumeMounts:
-            - name: script-volume
-              mountPath: /scripts
+              - "/opt/bitnami/spark/bin/spark-submit"
+              - "--master"
+              - "k8s://https://kubernetes.default.svc"
+              - "--deploy-mode"
+              - "cluster"
+              - "--name"
+              - "pix-treino-diario"
+              - "--conf"
+              - "spark.kubernetes.container.image=bitnami/spark:3.5.1"
+              - "--conf"
+              - "spark.kubernetes.namespace=datalake"
+              - "--conf"
+              - "spark.kubernetes.authenticate.driver.serviceAccountName=spark"
+              - "--conf"
+              - "spark.executor.instances=2"
+              - "--conf"
+              - "spark.executor.memory=2g"
+              - "--packages"
+              - "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262"
+              - "/scripts/pix_fraud_pipeline.py"
             env:
-            - name: MLFLOW_S3_ENDPOINT_URL
-              value: "http://bucket-minio.datalake.svc.cluster.local:9000"
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow-service.datalake.svc.cluster.local:5000"
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
@@ -45,8 +47,11 @@ spec:
                 secretKeyRef:
                   name: minio-credentials
                   key: secret-key
+            volumeMounts:
+            - name: script-volume
+              mountPath: /scripts
           volumes:
           - name: script-volume
             configMap:
-              name: spark-etl-code
+              name: spark-treino-code
           restartPolicy: Never

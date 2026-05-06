@@ -7,67 +7,69 @@ from pyspark.ml import Pipeline
 import mlflow
 import mlflow.spark
 
-mlflow.set_tracking_uri("http://mlflow-service.datalake.svc.cluster.local:5000")
+
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-service.datalake.svc.cluster.local:5000")
+MLFLOW_S3_ENDPOINT = os.getenv("MLFLOW_S3_ENDPOINT", "http://bucket-minio.datalake.svc.cluster.local:9000")
+AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID", "admin")
+AWS_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "admin123")
+MINIO_RAW_PATH = "s3a://raw/pix_raw/*.csv"   # ou .parquet
+
+mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 mlflow.set_experiment("Deteccao_Fraude_PIX")
 
 spark = SparkSession.builder \
     .appName("MLOps-PIX-Fraud-Pipeline") \
-    .master("local[*]") \
-    .config("spark.hadoop.fs.s3a.endpoint", "http://bucket-minio.datalake.svc.cluster.local:9000") \
-    .config("spark.hadoop.fs.s3a.access.key", "admin") \
-    .config("spark.hadoop.fs.s3a.secret.key", "admin123") \
+    .config("spark.hadoop.fs.s3a.endpoint", MLFLOW_S3_ENDPOINT) \
+    .config("spark.hadoop.fs.s3a.access.key", AWS_ACCESS_KEY) \
+    .config("spark.hadoop.fs.s3a.secret.key", AWS_SECRET_KEY) \
     .config("spark.hadoop.fs.s3a.path.style.access", "true") \
     .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
     .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
     .getOrCreate()
 
-print(">>> [INFO] Spark & MLflow Iniciados. Tema: Fraude PIX.")
+spark.sparkContext.setLogLevel("WARN")
 
-data = [
-    (150.0, 14, 85, 1, 0),
-    (4500.0, 3, 12, 3, 1),
-    (45.0, 19, 90, 2, 0),
-    (8000.0, 2, 8, 3, 1),
-    (1200.0, 10, 75, 1, 0),
-    (5000.0, 4, 15, 3, 1),
-    (20.0, 15, 95, 2, 0)
-]
-columns = ["valor_pix", "hora_transacao", "score_conta_origem", "tipo_chave", "is_fraude"]
-df = spark.createDataFrame(data, columns)
+print(">>> [INFO] Lendo dados reais do MinIO (raw)...")
+try:
+    df_raw = spark.read.option("header", "true").csv(MINIO_RAW_PATH)
+except Exception as e:
+    print(f">>> [ERRO] Não foi possível ler dados: {e}")
+    spark.stop()
+    exit(1)
 
-df.write.mode("overwrite").csv("s3a://raw/pix_raw")
-print(">>> [ETL] Transações brutas salvas no MinIO (raw).")
+df = df_raw.select(
+    "valor_pix", "hora_transacao", "score_conta_origem", "tipo_chave", "is_fraude"
+).na.drop()
 
-assembler_etl = VectorAssembler(inputCols=["valor_pix", "hora_transacao", "score_conta_origem", "tipo_chave"], outputCol="features")
-df_features = assembler_etl.transform(df)
-df_features.write.mode("overwrite").parquet("s3a://processed/pix_features.parquet")
-print(">>> [ETL] Features extraídas e salvas no MinIO em Parquet (processed).")
+print(f">>> [INFO] Total de registros: {df.count()}")
 
 train_data, test_data = df.randomSplit([0.7, 0.3], seed=42)
 
 with mlflow.start_run():
-    print(">>> [ML] Treinando modelo Random Forest com Pipeline MLOps...")
-    
-    num_trees = 20
-    max_depth = 7
+    num_trees = 50
+    max_depth = 10
     mlflow.log_param("num_trees", num_trees)
     mlflow.log_param("max_depth", max_depth)
-    
-    assembler_ml = VectorAssembler(inputCols=["valor_pix", "hora_transacao", "score_conta_origem", "tipo_chave"], outputCol="features")
-    rf = RandomForestClassifier(featuresCol="features", labelCol="is_fraude", numTrees=num_trees, maxDepth=max_depth)
-    
-    pipeline = Pipeline(stages=[assembler_ml, rf])
+
+    assembler = VectorAssembler(
+        inputCols=["valor_pix", "hora_transacao", "score_conta_origem", "tipo_chave"],
+        outputCol="features"
+    )
+    rf = RandomForestClassifier(featuresCol="features", labelCol="is_fraude",
+                                numTrees=num_trees, maxDepth=max_depth)
+    pipeline = Pipeline(stages=[assembler, rf])
+
     model = pipeline.fit(train_data)
 
     predictions = model.transform(test_data)
     evaluator = MulticlassClassificationEvaluator(labelCol="is_fraude", predictionCol="prediction", metricName="accuracy")
     accuracy = evaluator.evaluate(predictions)
-    
+
     mlflow.log_metric("accuracy", accuracy)
-    print(f">>> [ML] Modelo treinado! Acurácia: {accuracy:.2f}")
-    
+    print(f">>> [ML] Acurácia: {accuracy:.4f}")
+
     mlflow.spark.log_model(model, "pix_fraud_rf_model")
-    print(">>> [MLOps] Modelo de Fraude registrado no MLflow e salvo no MinIO!")
+    print(">>> [MLOps] Modelo registrado no MLflow")
 
 spark.stop()
-print(">>> [INFO] Pipeline End-to-End Concluído.")
+print(">>> Fim do treinamento.")

@@ -1,4 +1,10 @@
 terraform {
+  backend "azurerm" {
+    resource_group_name  = "tfstate-rg"
+    storage_account_name = "tfstatemlops"
+    container_name       = "tfstate"
+    key                  = "mlops-pix.tfstate"
+  }
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
@@ -14,6 +20,10 @@ provider "azurerm" {
 resource "azurerm_resource_group" "rg_mlops" {
   name     = "ProjetoMLOps-RG-v3"
   location = "Central US"
+  tags = {
+    Environment = "dev"
+    Project     = "PIX-Fraud-MLOps"
+  }
 }
 
 resource "azurerm_container_registry" "acr_mlops" {

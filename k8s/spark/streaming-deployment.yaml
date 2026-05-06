@@ -13,27 +13,17 @@ spec:
       labels:
         app: spark-streaming
     spec:
+      serviceAccountName: spark
       containers:
       - name: spark
-        image: spark:3.5.1
+        image: bitnami/spark:3.5.1
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "250m"
-          limits:
             memory: "2Gi"
-            cpu: "500m"
-        command:
-          - "bash"
-          - "-c"
-          - >
-            mkdir -p /tmp/pip_libs &&
-            pip install --no-cache-dir --target /tmp/pip_libs boto3==1.33.13 numpy pandas redis &&
-            export PYTHONPATH=$PYTHONPATH:/tmp/pip_libs &&
-            /opt/spark/bin/spark-submit --conf spark.jars.ivy=/tmp/.ivy2 --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1 /scripts/pix_streaming_pipeline.py
-        volumeMounts:
-        - name: script-volume
-          mountPath: /scripts
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
         env:
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
@@ -45,6 +35,36 @@ spec:
             secretKeyRef:
               name: minio-credentials
               key: secret-key
+        - name: KAFKA_BOOTSTRAP
+          value: "pix-cluster-kafka-bootstrap:9092"
+        - name: REDIS_HOST
+          value: "redis-service.datalake.svc.cluster.local"
+        command:
+          - "/opt/bitnami/spark/bin/spark-submit"
+          - "--master"
+          - "k8s://https://kubernetes.default.svc"
+          - "--deploy-mode"
+          - "cluster"
+          - "--name"
+          - "pix-streaming"
+          - "--conf"
+          - "spark.kubernetes.container.image=bitnami/spark:3.5.1"
+          - "--conf"
+          - "spark.kubernetes.namespace=datalake"
+          - "--conf"
+          - "spark.kubernetes.authenticate.driver.serviceAccountName=spark"
+          - "--conf"
+          - "spark.executor.instances=1"
+          - "--conf"
+          - "spark.executor.memory=1g"
+          - "--conf"
+          - "spark.executor.cores=1"
+          - "--packages"
+          - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262"
+          - "/scripts/pix_streaming_pipeline.py"
+        volumeMounts:
+        - name: script-volume
+          mountPath: /scripts
       volumes:
       - name: script-volume
         configMap:
