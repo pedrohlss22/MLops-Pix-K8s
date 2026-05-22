@@ -14,17 +14,33 @@ spec:
         app: spark-streaming
     spec:
       serviceAccountName: spark
+      securityContext:
+        runAsUser: 1001
+        runAsNonRoot: true
       containers:
       - name: spark
-        image: bitnami/spark:3.5.1
+        image: acrmlopspix.azurecr.io/spark-custom:latest
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "250m"
-          limits:
             memory: "1Gi"
             cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
         env:
+        - name: KAFKA_USER
+          value: "spark-kafka-user"
+        - name: KAFKA_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: spark-kafka-user
+              key: password
+        - name: HADOOP_USER_NAME
+          value: "spark"
+        - name: USER
+          value: "spark"
+        - name: LOGNAME
+          value: "spark"
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
@@ -42,25 +58,17 @@ spec:
         command:
           - "/opt/bitnami/spark/bin/spark-submit"
           - "--master"
-          - "k8s://https://kubernetes.default.svc"
+          - "local[*]"
           - "--deploy-mode"
-          - "cluster"
+          - "client"
           - "--name"
           - "pix-streaming"
           - "--conf"
-          - "spark.kubernetes.container.image=bitnami/spark:3.5.1"
+          - "spark.sql.shuffle.partitions=2"
           - "--conf"
-          - "spark.kubernetes.namespace=datalake"
+          - "spark.default.parallelism=2"
           - "--conf"
-          - "spark.kubernetes.authenticate.driver.serviceAccountName=spark"
-          - "--conf"
-          - "spark.executor.instances=1"
-          - "--conf"
-          - "spark.executor.memory=1g"
-          - "--conf"
-          - "spark.executor.cores=1"
-          - "--packages"
-          - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262"
+          - "spark.driver.extraJavaOptions=-Duser.home=/tmp -Duser.name=spark -Djava.security.krb5.conf=/dev/null"
           - "/scripts/pix_streaming_pipeline.py"
         volumeMounts:
         - name: script-volume

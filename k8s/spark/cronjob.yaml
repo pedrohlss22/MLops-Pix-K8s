@@ -10,33 +10,35 @@ spec:
       template:
         spec:
           serviceAccountName: spark
+          securityContext:
+            runAsUser: 1001
+            runAsNonRoot: true
           containers:
           - name: spark
-            image: bitnami/spark:3.5.1   # imagem mais completa
+            image: acrmlopspix.azurecr.io/spark-custom:latest
+            resources:
+              requests:
+                memory: "1Gi"
+                cpu: "500m"
+              limits:
+                memory: "2Gi"
+                cpu: "1000m"
             command:
               - "/opt/bitnami/spark/bin/spark-submit"
               - "--master"
-              - "k8s://https://kubernetes.default.svc"
+              - "local[*]"
               - "--deploy-mode"
-              - "cluster"
+              - "client"
               - "--name"
               - "pix-treino-diario"
               - "--conf"
-              - "spark.kubernetes.container.image=bitnami/spark:3.5.1"
-              - "--conf"
-              - "spark.kubernetes.namespace=datalake"
-              - "--conf"
-              - "spark.kubernetes.authenticate.driver.serviceAccountName=spark"
-              - "--conf"
-              - "spark.executor.instances=2"
-              - "--conf"
-              - "spark.executor.memory=2g"
-              - "--packages"
-              - "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262"
+              - "spark.driver.extraJavaOptions=-Duser.home=/tmp -Duser.name=spark -Djava.security.krb5.conf=/dev/null"
               - "/scripts/pix_fraud_pipeline.py"
             env:
             - name: MLFLOW_TRACKING_URI
               value: "http://mlflow-service.datalake.svc.cluster.local:5000"
+            - name: MLFLOW_S3_ENDPOINT
+              value: "http://bucket-minio.datalake.svc.cluster.local:9000"
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:

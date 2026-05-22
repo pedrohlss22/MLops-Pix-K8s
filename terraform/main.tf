@@ -1,10 +1,11 @@
 terraform {
-  backend "azurerm" {
-    resource_group_name  = "tfstate-rg"
-    storage_account_name = "tfstatemlops"
-    container_name       = "tfstate"
-    key                  = "mlops-pix.tfstate"
-  }
+  # Comentado para permitir uso local por quem clonar o repositório
+  # backend "azurerm" {
+  #   resource_group_name  = "tfstate-rg"
+  #   storage_account_name = "tfstatemlops"
+  #   container_name       = "tfstate"
+  #   key                  = "mlops-pix.tfstate"
+  # }
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
@@ -39,17 +40,20 @@ resource "azurerm_kubernetes_cluster" "aks_mlops" {
   location            = azurerm_resource_group.rg_mlops.location
   resource_group_name = azurerm_resource_group.rg_mlops.name
   dns_prefix          = "clustermlops"
+  kubernetes_version  = "1.28"  
 
   default_node_pool {
-    name       = "default"
-    node_count = 2
-    vm_size    = "Standard_B2s"
+    name                 = "default"
+    vm_size              = "Standard_D2s_v3"
+    enable_auto_scaling  = true
+    min_count            = 2
+    max_count            = 4
   }
 
   identity {
     type = "SystemAssigned"
   }
-}
+} 
 
 resource "azurerm_role_assignment" "aks_acr_pull" {
   principal_id                     = azurerm_kubernetes_cluster.aks_mlops.kubelet_identity[0].object_id

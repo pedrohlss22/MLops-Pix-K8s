@@ -5,13 +5,34 @@ on:
     branches:
       - main
     paths:
-      - 'src/**'
+      - 'src/api/**'
       - '.github/workflows/**'
       - 'Dockerfile'
-      - 'requirements.txt'
+      - 'tests/**'
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest httpx pyspark
+
+      - name: Run Tests
+        run: |
+          PYTHONPATH=./ pytest tests/
+
   build-and-deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -39,3 +60,4 @@ jobs:
       - name: Deploy to Kubernetes
         run: |
           kubectl set image deployment/fraud-api fraud-api=acrmlopspix.azurecr.io/fraud-api:${{ github.sha }} -n datalake
+          kubectl rollout status deployment/fraud-api -n datalake --timeout=90s

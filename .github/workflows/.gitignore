@@ -1,17 +1,7 @@
-# Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.env
-venv/
-env/
-
-# Kubernetes Secrets Reais (Proteção máxima)
-k8s/spark/secrets.yaml
-k8s/minio/secrets.yaml
-*secret*.yaml
-!*secret*.example.yaml
-
-# IDEs
-.vscode/
-.idea/
+*.pyc
+.pytest_cache/
+.terraform/
+*.tfstate
+*.tfstate.*
+.env

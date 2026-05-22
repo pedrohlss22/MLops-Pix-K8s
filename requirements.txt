@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-mlflow==2.16.2
-boto3==1.33.13
-pyspark==3.5.1
-pandas
-redis

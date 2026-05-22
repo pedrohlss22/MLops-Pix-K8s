@@ -1,12 +1,14 @@
 import os
 import redis
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, window, count, expr
-from pyspark.sql.types import StructType, StructField, DoubleType, IntegerType, TimestampType
+from pyspark.sql.functions import from_json, col, window, count
 
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "pix-cluster-kafka-bootstrap:9092")
 KAFKA_TOPIC_IN = "transacoes-pix"
 KAFKA_TOPIC_DLQ = "transacoes-pix-dlq"
+KAFKA_USER = os.getenv("KAFKA_USER", "spark-kafka-user")
+KAFKA_PASSWORD = os.getenv("KAFKA_PASSWORD", "")
+
 REDIS_HOST = os.getenv("REDIS_HOST", "redis-service.datalake.svc.cluster.local")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://bucket-minio.datalake.svc.cluster.local:9000")
@@ -14,6 +16,8 @@ MINIO_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID", "admin")
 MINIO_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "admin123")
 CHECKPOINT_LOCATION = "s3a://processed/checkpoints_pix_v4/"
 OUTPUT_PATH_PARQUET = "s3a://processed/pix_history_v4/"
+
+jaas_config = f'org.apache.kafka.common.security.scram.ScramLoginModule required username="{KAFKA_USER}" password="{KAFKA_PASSWORD}";'
 
 spark = SparkSession.builder \
     .appName("PIX-Fraud-Streaming-Enterprise") \
@@ -28,6 +32,7 @@ spark = SparkSession.builder \
 spark.sparkContext.setLogLevel("WARN")
 print(">>> [INFO] Spark Streaming inicializado (modo cluster)")
 
+from pyspark.sql.types import StructType, StructField, DoubleType, IntegerType, TimestampType
 schema_transacao = StructType([
     StructField("valor_pix", DoubleType(), True),
     StructField("hora_transacao", IntegerType(), True),
@@ -43,6 +48,9 @@ df_kafka = spark.readStream \
     .option("subscribe", KAFKA_TOPIC_IN) \
     .option("startingOffsets", "latest") \
     .option("failOnDataLoss", "false") \
+    .option("kafka.security.protocol", "SASL_PLAINTEXT") \
+    .option("kafka.sasl.mechanism", "SCRAM-SHA-512") \
+    .option("kafka.sasl.jaas.config", jaas_config) \
     .load()
 
 df_parsed = df_kafka.selectExpr("CAST(value AS STRING) as value_str") \
@@ -62,16 +70,15 @@ query_dlq = df_bad.writeStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP) \
     .option("topic", KAFKA_TOPIC_DLQ) \
+    .option("kafka.security.protocol", "SASL_PLAINTEXT") \
+    .option("kafka.sasl.mechanism", "SCRAM-SHA-512") \
+    .option("kafka.sasl.jaas.config", jaas_config) \
     .option("checkpointLocation", CHECKPOINT_LOCATION + "dlq") \
     .start()
 
 df_with_watermark = df_good.withWatermark("event_time", "1 minute")
-
 df_window_counts = df_with_watermark \
-    .groupBy(
-        window(col("event_time"), "5 minutes"),
-        col("tipo_chave")
-    ) \
+    .groupBy(window(col("event_time"), "5 minutes"), col("tipo_chave")) \
     .agg(count("*").alias("qtd_transacoes"))
 
 def update_redis_from_window(df_batch, batch_id):

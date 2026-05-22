@@ -22,7 +22,7 @@ spec:
         - name: KAFKA_CLUSTERS_0_NAME
           value: "PIX-Cluster-Producao"
         - name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
-          value: "pix-cluster-kafka-bootstrap:9092" # Conecta direto no Strimzi
+          value: "pix-cluster-kafka-bootstrap:9092"
         - name: DYNAMIC_CONFIG_ENABLED
           value: "true"
 ---

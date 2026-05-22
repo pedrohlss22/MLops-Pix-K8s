@@ -18,6 +18,46 @@ spec:
         image: acrmlopspix.azurecr.io/fraud-api:latest
         ports:
         - containerPort: 8000
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: "http://mlflow-server.datalake.svc.cluster.local:5000"
+        - name: MLFLOW_S3_ENDPOINT
+          value: "http://bucket-minio.datalake.svc.cluster.local:9000"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: access-key
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: secret-key
+        - name: REDIS_HOST
+          value: "redis-service.datalake.svc.cluster.local"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: MODEL_RUN_ID
+          value: "ea6a6f5910e34050855eb670e3f2377c" 
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service

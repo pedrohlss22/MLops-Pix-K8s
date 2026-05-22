@@ -1,54 +1,114 @@
-# Detecção de Fraude em PIX: MLOps & Streaming no Kubernetes
+Detecção de Fraude em PIX: Arquitetura Dual-Path com MLOps e Streaming
 
-Este é um laboratório prático de arquitetura de dados e MLOps focado em um dos cenários mais críticos do sistema financeiro: a detecção de fraudes em transações PIX.
+Este é um laboratório prático de engenharia de dados e MLOps desenhado para resolver um dos cenários mais rigorosos do sistema financeiro: a detecção de fraudes em transações PIX em tempo real.
 
-O desafio técnico principal do PIX é a latência. Você tem poucos milissegundos para aprovar ou bloquear uma transação. Se a API de inferência precisar consultar um banco de dados relacional para montar o histórico do cliente a cada transação, o sistema entra em gargalo. 
+O maior desafio antifraude do PIX é a latência. Com SLAs de resposta na casa dos milissegundos, consultar bancos de dados relacionais para reconstruir o histórico do cliente no momento da transação não é viável. Para contornar esse gargalo, esta arquitetura implementa um padrão Dual-Path (Fluxo Quente e Fluxo Frio), unindo processamento distribuído, Feature Stores em memória e deploy automatizado de modelos.
+🏗️ Desenho da Arquitetura
 
-Para resolver isso, a arquitetura foi desenhada separando o processamento em dois fluxos paralelos (Dual-Path): um para a resposta em tempo real e outro para o processamento contínuo dos dados.
+O ecossistema é conteinerizado e orquestrado no Azure Kubernetes Service (AKS), com provisionamento elástico gerenciado via Terraform.
+1. Fluxo Rápido (Hot Path: API + Feature Store)
 
-## O Desenho da Arquitetura
+A linha de frente do sistema. Responde à transação em tempo real.
 
-Toda a infraestrutura roda de forma conteinerizada sobre um cluster **Azure Kubernetes Service (AKS)**.
+    Inferência na Borda: Uma API em FastAPI carrega o modelo de Machine Learning dinamicamente via MLflow Model Registry. O modelo reside na memória RAM do pod para inferência I/O-free.
 
-### 1. O Fluxo Rápido (API + Feature Store)
-A linha de frente do sistema. O objetivo aqui é responder rápido.
-* A requisição do PIX bate numa API feita em **FastAPI**. O modelo de Machine Learning (`.pkl` / `.joblib`) fica carregado estaticamente na memória RAM do pod para inferência imediata.
-* **O papel do Redis:** A API sozinha sofre de "amnésia" (ela só vê o PIX atual). Para saber se aquele usuário fez 10 transações nos últimos 5 minutos, a API faz um GET em um **Redis**. O Redis atua como uma *Feature Store* de baixa latência, entregando o contexto da transação em menos de 1ms para o modelo tomar a decisão.
+    Feature Store Efêmera: A API consulta um cluster Redis para resgatar agregados comportamentais (ex: "Quantas chaves distintas esse usuário usou nos últimos 5 minutos?"). O Redis entrega esse contexto em <1ms, permitindo que o modelo avalie o risco baseado em histórico recente sem atrasar o PIX.
 
-### 2. O Fluxo de Streaming (A "Cozinha" dos Dados)
-Enquanto a API responde aos usuários, os dados brutos caem em um cluster **Apache Kafka** (gerenciado via Strimzi Operator) para processamento assíncrono.
-* Um job contínuo do **Spark Structured Streaming** consome os tópicos do Kafka e faz o roteamento triplo da informação:
-  1. **Atualização da Feature Store:** O Spark calcula as agregações temporais em tempo real e atualiza os contadores no Redis (com um *Time-to-Live* de 10 minutos).
-  2. **Data Lake (Cold Storage):** Os dados válidos são limpos, transformados em formato colunar (Parquet) e salvos em um cluster **MinIO** (S3-compatible). Esses dados formarão o histórico para o retreino noturno do modelo.
-  3. **Dead Letter Queue (DLQ):** Payloads malformados ou com campos nulos não quebram o Spark. Eles são isolados e roteados para um tópico específico de DLQ no Kafka para análise posterior.
+    Observabilidade: A API está instrumentada nativamente para o Prometheus, exportando métricas de latência e contagem de bloqueios/aprovações via /metrics.
 
-## Engenharia de Software e MLOps
+2. Fluxo de Streaming (Cold Path: Mensageria e Data Lake)
 
-O projeto não se limita apenas ao fluxo de dados, mas também em como o código chega em produção e como os modelos são gerenciados:
+O motor assíncrono que processa os dados, retroalimenta o cache e prepara o terreno para retreinos.
 
-* **Model Registry:** Utilizamos o **MLflow** deployado no Kubernetes para rastrear os experimentos, salvar métricas e versionar os modelos de fraude aprovados.
-* **CI/CD:** Toda vez que a API recebe uma atualização no código, o **GitHub Actions** compila uma nova imagem Docker, envia para o Azure Container Registry (ACR) e executa um *Rolling Update* no Kubernetes, garantindo zero downtime.
-* **Infraestrutura como Código:** O provisionamento da nuvem (AKS, ACR, permissões) está mapeado na pasta `/terraform`, facilitando a recriação do ambiente.
+    Ingestão Segura: Dados brutos caem em um cluster Apache Kafka gerenciado pelo operador Strimzi (com autenticação SCRAM-SHA-512).
 
-## Stack Resumida
-* **Processamento:** Apache Spark (PySpark), Apache Kafka
-* **Armazenamento:** MinIO (Data Lake), Redis (Feature Store)
-* **ML & API:** Python, FastAPI, MLflow, Scikit-Learn
-* **DevOps/SRE:** Kubernetes (AKS), Docker, Terraform, GitHub Actions
+    Processamento (Spark Structured Streaming): Um job contínuo em PySpark consome os tópicos e realiza um roteamento triplo:
 
-## Estrutura do Código
+        Atualização da Feature Store: Calcula agregações em janelas temporais (Window Functions) e injeta os novos contadores no Redis com um TTL (Time-to-Live).
 
-```text
-├── .github/workflows/       # Automação de deploy da API
-├── k8s/                     # Manifestos do Kubernetes (Deployments, Services, ConfigMaps)
-│   ├── api/                 # microsserviço FastAPI
-│   ├── kafka/               # Cluster Kafka Strimzi
-│   ├── minio/               # Armazenamento S3
-│   ├── mlflow/              # Tracker de ML
-│   ├── redis/               # Servidor da Feature Store
-│   └── spark/               # Scripts de Streaming e Batch
-├── src/                     # Lógica dos pipelines
-│   ├── pix_streaming_pipeline.py  # Script de processamento em tempo real
-│   └── pix_fraud_pipeline.py      # Script de treino do modelo
-├── terraform/               # Configuração da infraestrutura Azure
-└── Dockerfile               # Receita da imagem da API
+        Data Lake (Historical): Limpa, tipa e salva os dados válidos em formato colunar (Parquet) no MinIO (S3-compatible) para o treinamento noturno.
+
+        Dead Letter Queue (DLQ): Payloads nulos ou corrompidos são interceptados e desviados para um tópico de erro, garantindo que o streaming nunca trave.
+
+⚙️ Diferenciais de Engenharia e MLOps
+
+    Model Registry (Decoupled Deployment): A API não possui IDs de modelos hardcoded. O CronJob noturno do Spark treina novos dados e registra o modelo (pix_fraud_prod) no MLflow. A API sempre busca a versão latest do Registry no startup, separando o ciclo de vida do software do ciclo do modelo.
+
+    DevSecOps e Imutabilidade: O pipeline utiliza imagens Spark customizadas (Dockerfile.spark) construídas rootless (UID 1001), mitigando vulnerabilidades de execução e falhas de Kerberos. Drivers do S3 e conectores do Kafka são embutidos no classpath via build stage.
+
+    Qualidade e CI/CD: A esteira do GitHub Actions exige a aprovação em testes automatizados (pytest com Mocks e Local Spark Sessions) antes de compilar imagens, subir para o Azure Container Registry (ACR) e aplicar Rolling Updates no cluster.
+
+🛠️ Stack Tecnológica
+
+    Cloud & IaC: Azure (AKS, ACR), Terraform
+
+    Processamento: Apache Spark (PySpark), Apache Kafka (Strimzi KRaft)
+
+    Armazenamento: MinIO (Object Storage), Redis (In-Memory Data Grid)
+
+    ML, API & QA: Python, FastAPI, MLflow, Scikit-Learn, Pytest
+
+    DevOps: Kubernetes, Docker, GitHub Actions, Prometheus
+
+📂 Estrutura do Repositório
+
+├── .github/workflows/       # CI/CD (Testes e Deploy no AKS)
+├── k8s/                     # Manifestos Kubernetes (Declarative State)
+│   ├── api/                 # Deployment, Service e ServiceMonitor da API
+│   ├── kafka/               # Cluster Strimzi, Tópicos e Autenticação
+│   ├── mlflow/              # Deployment do Model Registry
+│   ├── redis/               # StatefulSet da Feature Store
+│   └── spark/               # Streaming Deployment e CronJob de Treinamento
+├── src/                     # Código-fonte das aplicações
+│   ├── api/main.py          # Backend FastAPI e Inferência
+│   ├── pix_streaming.py     # Agregação contínua em tempo real
+│   └── pix_fraud_train.py   # Pipeline de ML (RandomForest + PR-AUC)
+├── tests/                   # Suíte de integração e testes unitários
+├── terraform/               # Provisionamento da Azure (AKS Autoscaling, ACR)
+├── docker-compose.yml       # Emulação do ambiente local para desenvolvimento
+├── Dockerfile               # Imagem da API
+└── Dockerfile.spark         # Imagem baseada na Bitnami, segura e customizada
+
+🚀 Como Executar
+Opção A: Ambiente Local (Desenvolvimento)
+
+Ideal para validar a integração e rodar testes sem custos de nuvem.
+
+# Sobe Kafka, Redis, MinIO e MLflow
+docker-compose up -d
+
+# Executa a suíte de testes unitários e de integração
+pytest tests/
+
+
+Opção B: Deploy em Produção (Azure AKS)
+
+1. Suba a Infraestrutura (Terraform)
+
+cd terraform
+terraform init
+terraform apply -auto-approve
+
+2. Autentique no Cluster
+
+az aks get-credentials --resource-group ProjetoMLOps-RG-v3 --name ClusterMLOps
+
+3. Deploy do Data Plane (K8s)
+Respeite a ordem de dependência dos manifestos:
+
+# 1. Base e Armazenamento
+kubectl apply -f k8s/minio/
+kubectl apply -f k8s/redis/
+kubectl apply -f k8s/mlflow/
+
+# 2. Mensageria (Aguarde o broker ficar Ready)
+kubectl apply -f k8s/kafka/
+
+# 3. Processamento Contínuo
+kubectl apply -f k8s/spark/streaming-deployment.yaml
+
+# 4. Treinamento Inicial (Obrigatório para gerar o modelo V1 no MLflow)
+kubectl create job init-treino --from=cronjob/spark-treino-diario -n datalake
+
+# 5. Motor de Inferência (A API consumirá o modelo recém-treinado)
+kubectl apply -f k8s/api/

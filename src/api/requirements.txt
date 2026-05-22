@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+mlflow-skinny==2.16.2
+boto3==1.33.13
+pandas
+redis
+prometheus-fastapi-instrumentator
+kafka-python
