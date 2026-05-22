@@ -13,18 +13,19 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    steps:
+    steps:  
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install Dependencies
         run: |
-          pip install -r requirements.txt
+          # CORREÇÃO: Apontando para o novo diretório do arquivo
+          pip install -r src/api/requirements.txt
           pip install pytest httpx pyspark
 
       - name: Run Tests
@@ -36,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Login to Azure
         uses: azure/login@v1
